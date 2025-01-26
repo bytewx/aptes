@@ -26,18 +26,21 @@ def run_dns_enum(domain):
         output_data = []
         print(f"Starting DNS enumeration for domain: {domain}")
 
-        try:
-            print(f"Running dig on domain: {domain} with ANY query...")
-            dig_output = subprocess.check_output(["dig", domain, "ANY"], text=True)
-            print("DIG Output captured successfully.")
-            parsed_dig = parse_dig_output(dig_output)
-            output_data.append("=== DIG Output (Filtered) ===\n" + parsed_dig)
-        except FileNotFoundError:
-            output_data.append("dig is not installed or not found in PATH.\n")
-            print("Error: dig is not installed or not found in PATH.")
-        except subprocess.CalledProcessError as e:
-            output_data.append(f"Error running dig: {e}")
-            print(f"Error running dig: {e}")
+        record_types = ["A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA"]
+
+        for record_type in record_types:
+            try:
+                print(f"Running dig on domain: {domain} with {record_type} query...")
+                dig_output = subprocess.check_output(["dig", domain, record_type], text=True)
+                print(f"DIG Output for {record_type} captured successfully.")
+                parsed_dig = parse_dig_output(dig_output)
+                output_data.append(f"=== DIG Output ({record_type}) ===\n" + parsed_dig)
+            except FileNotFoundError:
+                output_data.append(f"dig is not installed or not found in PATH for {record_type} query.\n")
+                print(f"Error: dig is not installed or not found in PATH for {record_type} query.")
+            except subprocess.CalledProcessError as e:
+                output_data.append(f"Error running dig for {record_type}: {e}\n")
+                print(f"Error running dig for {record_type}: {e}")
 
         try:
             print(f"Running nslookup on domain: {domain}")
@@ -48,7 +51,7 @@ def run_dns_enum(domain):
             output_data.append("nslookup is not installed or not found in PATH.\n")
             print("Error: nslookup is not installed or not found in PATH.")
         except subprocess.CalledProcessError as e:
-            output_data.append(f"Error running nslookup: {e}")
+            output_data.append(f"Error running nslookup: {e}\n")
             print(f"Error running nslookup: {e}")
 
         try:
@@ -60,7 +63,7 @@ def run_dns_enum(domain):
             output_data.append("whois is not installed or not found in PATH.\n")
             print("Error: whois is not installed or not found in PATH.")
         except subprocess.CalledProcessError as e:
-            output_data.append(f"Error running whois: {e}")
+            output_data.append(f"Error running whois: {e}\n")
             print(f"Error running whois: {e}")
 
         with open(output_file, "w") as file:
