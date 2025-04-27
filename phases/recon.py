@@ -1,17 +1,26 @@
 #!/usr/bin/env python3
 """
-Reconnaissance phase module for APTES
+Enhanced reconnaissance phase module for APTES with web crawling
 """
 
 import time
 import subprocess
 import logging
+import os
 from datetime import datetime
 
 from phases.base import PhaseBase
 from lib import scanners
 from utils import network
 from utils import parsers
+
+# Import web crawler
+try:
+    from lib.webcrawler import crawl_website, check_scrapy_installation, simple_url_check
+    WEBCRAWLER_AVAILABLE = True
+except ImportError:
+    WEBCRAWLER_AVAILABLE = False
+    logging.getLogger('aptes.recon').warning("Web crawler module not available")
 
 # Check for optional imports
 try:
@@ -27,7 +36,7 @@ except ImportError:
     CONCURRENT_AVAILABLE = False
 
 class ReconnaissancePhase(PhaseBase):
-    """Reconnaissance Phase Controller"""
+    """Enhanced Reconnaissance Phase Controller with Web Crawling"""
     
     def __init__(self, framework):
         """Initialize the Reconnaissance phase controller"""
@@ -36,12 +45,15 @@ class ReconnaissancePhase(PhaseBase):
         # Initialize phase-specific results
         self.results.update({
             "passive": {},
-            "active": {}
+            "active": {},
+            "webcrawler": {}
         })
     
-    def _execute(self, passive_only=False, skip_web=False, use_ping_scan=False, use_netbios_scan=False, use_aggressive_scan=False):
+    def _execute(self, passive_only=False, skip_web=False, use_ping_scan=False, 
+                use_netbios_scan=False, use_aggressive_scan=False,
+                crawl_web=False, crawl_depth=2):
         """
-        Execute reconnaissance phase operations
+        Execute reconnaissance phase operations including web crawling
         
         Args:
             passive_only (bool): Only perform passive reconnaissance
@@ -49,6 +61,8 @@ class ReconnaissancePhase(PhaseBase):
             use_ping_scan (bool): Use Nmap ping scan for host discovery
             use_netbios_scan (bool): Use NetBIOS scan for host discovery
             use_aggressive_scan (bool): Use Nmap aggressive scan for port and service detection
+            crawl_web (bool): Perform web crawling using Scrapy
+            crawl_depth (int): Maximum depth for web crawling
         """
         self.logger.info(f"Running reconnaissance on {self.target}")
         
@@ -60,8 +74,210 @@ class ReconnaissancePhase(PhaseBase):
             self.active_recon(skip_web=skip_web, use_ping_scan=use_ping_scan, 
                              use_netbios_scan=use_netbios_scan, 
                              use_aggressive_scan=use_aggressive_scan)
+            
+            # Perform web crawling if requested and not skipping web
+            if crawl_web and not skip_web:
+                if WEBCRAWLER_AVAILABLE:
+                    self.web_crawl(max_depth=crawl_depth)
+                else:
+                    self.logger.warning("Web crawler not available, skipping. Install Scrapy package to enable.")
+                    self.results["webcrawler"] = {
+                        "error": "Web crawler module not available",
+                        "total_urls_crawled": 0,
+                        "total_forms_found": 0,
+                        "targets_crawled": 0,
+                        "findings": [],
+                        "crawl_results": {}
+                    }
         
         return self.results
+    
+    def web_crawl(self, max_depth=2):
+        """
+        Perform web crawling using Scrapy
+        
+        Args:
+            max_depth (int): Maximum crawl depth
+            
+        Returns:
+            dict: Web crawling results
+        """
+        self.logger.info("Starting web crawling")
+        
+        if not WEBCRAWLER_AVAILABLE:
+            self.logger.error("Web crawler module not available, skipping web crawling")
+            self.results["webcrawler"] = {
+                "error": "Web crawler module not available",
+                "total_urls_crawled": 0,
+                "total_forms_found": 0,
+                "targets_crawled": 0,
+                "findings": [],
+                "crawl_results": {}
+            }
+            return self.results["webcrawler"]
+        
+        if not check_scrapy_installation():
+            self.logger.error("Scrapy not installed, skipping web crawling")
+            self.results["webcrawler"] = {
+                "error": "Scrapy not installed",
+                "total_urls_crawled": 0,
+                "total_forms_found": 0,
+                "targets_crawled": 0,
+                "findings": [],
+                "crawl_results": {}
+            }
+            return self.results["webcrawler"]
+        
+        # Get web servers from port scan results
+        web_targets = []
+        
+        # Check for web servers in active recon results
+        if "ports" in self.results["active"]:
+            for host, host_data in self.results["active"]["ports"].items():
+                for proto, proto_data in host_data.items():
+                    for port, port_data in proto_data.items():
+                        service = port_data.get("service", "").lower()
+                        if "http" in service or port in ["80", "443", "8080", "8443"]:
+                            protocol = "https" if port in ["443", "8443"] or "https" in service else "http"
+                            web_targets.append({
+                                "host": host,
+                                "port": port,
+                                "url": f"{protocol}://{host}:{port}"
+                            })
+        
+        # If no web servers found, try common ports
+        if not web_targets:
+            for port in [80, 443, 8080, 8443]:
+                protocol = "https" if port in [443, 8443] else "http"
+                web_targets.append({
+                    "host": self.target,
+                    "port": str(port),
+                    "url": f"{protocol}://{self.target}:{port}"
+                })
+        
+        # Create output directory for sitemap files
+        sitemap_dir = os.path.join(self.framework.output_dir, "sitemaps")
+        os.makedirs(sitemap_dir, exist_ok=True)
+        
+        # Crawl each web target
+        all_crawl_results = {}
+        
+        for target in web_targets:
+            url = target["url"]
+            host = target["host"]
+            port = target["port"]
+            
+            self.logger.info(f"Crawling {url} (max depth: {max_depth})")
+            
+            # Generate output filename
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_url = url.replace("://", "_").replace(":", "_").replace("/", "_")
+            output_file = os.path.join(sitemap_dir, f"sitemap_{safe_url}_{timestamp}.json")
+            
+            # Perform crawling
+            try:
+                # Try a simple check first to see if the URL is accessible
+                self.logger.info(f"Performing initial check on {url}")
+                
+                # Skip URL if it's not accessible
+                if REQUESTS_AVAILABLE:
+                    try:
+                        response = requests.get(url, timeout=5, verify=False)
+                        if response.status_code >= 400:
+                            self.logger.warning(f"URL {url} returned status {response.status_code}, skipping")
+                            all_crawl_results[url] = {
+                                "error": f"URL returned status {response.status_code}",
+                                "crawled_urls": 0,
+                                "host": host,
+                                "port": port
+                            }
+                            continue
+                    except requests.RequestException as e:
+                        self.logger.warning(f"Cannot connect to {url}: {str(e)}")
+                        all_crawl_results[url] = {
+                            "error": f"Connection error: {str(e)}",
+                            "crawled_urls": 0,
+                            "host": host,
+                            "port": port
+                        }
+                        continue
+                
+                # Perform actual crawling
+                crawl_result = crawl_website(
+                    target_url=url,
+                    output_file=output_file,
+                    max_depth=max_depth
+                )
+                
+                # Add target info
+                crawl_result["host"] = host
+                crawl_result["port"] = port
+                crawl_result["sitemap_file"] = output_file
+                
+                # Add to results
+                all_crawl_results[url] = crawl_result
+                
+                self.logger.info(f"Crawled {crawl_result.get('crawled_urls', 0)} pages at {url}")
+                
+                # Pause between crawls to avoid overwhelming the server
+                time.sleep(2)
+                
+            except Exception as e:
+                self.logger.error(f"Error crawling {url}: {str(e)}")
+                all_crawl_results[url] = {
+                    "error": str(e),
+                    "crawled_urls": 0,
+                    "host": host,
+                    "port": port
+                }
+        
+        # Calculate overall statistics
+        total_urls = sum(result.get("crawled_urls", 0) for result in all_crawl_results.values())
+        total_forms = sum(result.get("forms_found", 0) for result in all_crawl_results.values())
+        
+        # Generate findings based on crawl results
+        findings = []
+        
+        for url, result in all_crawl_results.items():
+            # Check for forms
+            if result.get("forms_found", 0) > 0:
+                findings.append({
+                    "host": result["host"],
+                    "port": result["port"],
+                    "url": url,
+                    "finding": f"Found {result.get('forms_found', 0)} forms",
+                    "category": "Forms",
+                    "risk_level": "info",
+                    "description": "Forms may be vulnerable to various attacks such as CSRF, XSS, or SQL Injection",
+                    "urls": result.get("form_urls", [])[:10]  # Include up to 10 form URLs
+                })
+            
+            # Check for potential vulnerable URLs
+            if result.get("potential_vulnerable_urls", []):
+                findings.append({
+                    "host": result["host"],
+                    "port": result["port"],
+                    "url": url,
+                    "finding": f"Found {len(result.get('potential_vulnerable_urls', []))} potential vulnerable URLs",
+                    "category": "Potential Vulnerabilities",
+                    "risk_level": "low",
+                    "description": "URLs with parameters or forms that may be vulnerable to attacks",
+                    "urls": result.get("potential_vulnerable_urls", [])[:10]  # Include up to 10 vulnerable URLs
+                })
+        
+        # Store all results
+        crawler_summary = {
+            "total_urls_crawled": total_urls,
+            "total_forms_found": total_forms,
+            "targets_crawled": len(all_crawl_results),
+            "findings": findings,
+            "crawl_results": all_crawl_results
+        }
+        
+        self.results["webcrawler"] = crawler_summary
+        self.logger.info(f"Web crawling complete: {total_urls} total pages crawled")
+        
+        return crawler_summary
     
     def passive_recon(self):
         """Perform passive reconnaissance"""
@@ -121,7 +337,7 @@ class ReconnaissancePhase(PhaseBase):
             
             # Extract port and service information from aggressive scan
             self.results["active"]["ports"] = aggressive_results.get("ports", {})
-            self.results["active"]["services"] = aggressive_results.get("services", {})
+            self.results["active"]["services"] = self.results["active"]["services"] = aggressive_results.get("services", {})
             self.results["active"]["os_info"] = aggressive_results.get("os_info", {})
         else:
             # Use standard scans if aggressive scan not requested
