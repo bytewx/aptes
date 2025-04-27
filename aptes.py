@@ -53,6 +53,17 @@ def parse_arguments():
     parser.add_argument('--skip-web', action='store_true',
                         help='Skip web scanning during recon')
     
+    # New host discovery options
+    parser.add_argument('--ping-scan', action='store_true',
+                        help='Use Nmap ping scan for host discovery')
+    
+    parser.add_argument('--netbios-scan', action='store_true',
+                        help='Use NetBIOS scan for host discovery')
+    
+    # New port scanning options
+    parser.add_argument('--aggressive-scan', action='store_true',
+                        help='Use Nmap aggressive scan (-T4 -A -v) for port and service detection')
+    
     # Pre-exploitation phase options
     parser.add_argument('--filter', choices=['all', 'critical', 'high', 'medium', 'low'],
                         default='all', help='Risk level filter (default: all)')
@@ -111,6 +122,8 @@ def print_usage():
     print("  python -m aptes example.com                # Run pre-exploitation phase against example.com")
     print("  python -m aptes 192.168.1.10 -p recon      # Run only reconnaissance phase")
     print("  python -m aptes target.org --filter high   # Focus on high-risk vulnerabilities")
+    print("  python -m aptes 192.168.1.0/24 --ping-scan # Perform host discovery with Nmap ping scan")
+    print("  python -m aptes 192.168.1.10 --aggressive-scan # Run aggressive port and service scan")
     
     print("\nOptions:")
     print("  Target Selection:")
@@ -125,6 +138,13 @@ def print_usage():
     print("    --threads N             Number of threads for concurrent operations (default: 3)")
     print("    --format {json,excel,md,all}")
     print("                            Report format (default: all)")
+    
+    print("\n  Reconnaissance Options:")
+    print("    --passive-only          Perform only passive reconnaissance")
+    print("    --skip-web              Skip web scanning")
+    print("    --ping-scan             Use Nmap ping scan for host discovery")
+    print("    --netbios-scan          Use NetBIOS scan for host discovery")
+    print("    --aggressive-scan       Use Nmap aggressive scan for port and service detection")
     
     print("\n  Verbosity Options:")
     print("    -v, --verbose           Enable verbose output")
@@ -250,12 +270,29 @@ def print_summary(framework, phase):
         
         if "active" in results:
             print("\nActive Reconnaissance:")
+            
+            # Host discovery
+            if "host_discovery" in results["active"]:
+                if "ping_scan" in results["active"]["host_discovery"]:
+                    print(f"  - Ping Scan: {len(results['active']['host_discovery']['ping_scan'])} live hosts discovered")
+                if "netbios_scan" in results["active"]["host_discovery"]:
+                    print(f"  - NetBIOS Scan: {len(results['active']['host_discovery']['netbios_scan'])} hosts with NetBIOS info")
+            
+            # Port scan
             if "ports" in results["active"]:
                 open_ports = 0
                 for host_data in results["active"]["ports"].values():
                     for proto_data in host_data.values():
                         open_ports += len(proto_data)
                 print(f"  - Open Ports: {open_ports} discovered")
+            
+            # Aggressive scan results
+            if "aggressive_scan" in results["active"]:
+                print(f"  - Aggressive Scan: Completed")
+                if "os_info" in results["active"] and "details" in results["active"]["os_info"]:
+                    print(f"  - OS Detection: {results['active']['os_info']['details']}")
+            
+            # Services
             if "services" in results["active"]:
                 services = set()
                 for host_data in results["active"]["services"].values():
@@ -263,9 +300,13 @@ def print_summary(framework, phase):
                         for port_data in proto_data.values():
                             services.add(port_data.get("service", "unknown"))
                 print(f"  - Services: {', '.join(services) if services else 'None identified'}")
+            
+            # Vulnerabilities
             if "vulnerabilities" in results["active"]:
                 vulns = results["active"]["vulnerabilities"].get("vulnerabilities", [])
                 print(f"  - Potential Vulnerabilities: {len(vulns)} found")
+            
+            # Web
             if "web" in results["active"]:
                 web_results = results["active"]["web"]
                 print(f"  - Web Technologies: {', '.join(web_results.get('technologies', [])) if web_results.get('technologies') else 'None identified'}")
@@ -408,7 +449,10 @@ def main():
                 # Run reconnaissance phase
                 success = framework.run_phase('recon', 
                                              passive_only=args.passive_only,
-                                             skip_web=args.skip_web)
+                                             skip_web=args.skip_web,
+                                             use_ping_scan=args.ping_scan,
+                                             use_netbios_scan=args.netbios_scan,
+                                             use_aggressive_scan=args.aggressive_scan)
             
             elif phase == 'preexploit':
                 # Run pre-exploitation phase
