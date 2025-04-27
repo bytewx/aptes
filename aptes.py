@@ -30,8 +30,8 @@ def parse_arguments():
     parser.add_argument('target', nargs='?', help='Target host or IP address')
     
     # Phase selection
-    parser.add_argument('-p', '--phase', choices=['recon', 'preexploit', 'exploit', 'postexploit', 'all'],
-                        default='preexploit', help='Phase to run (default: preexploit)')
+    parser.add_argument('-p', '--phases', nargs='+', choices=['recon', 'preexploit', 'exploit', 'postexploit', 'all'],
+                      default=['preexploit'], help='Phases to run in sequence (default: preexploit)')
     
     # General options
     parser.add_argument('-o', '--output-dir', default='reports',
@@ -63,6 +63,13 @@ def parse_arguments():
     # New port scanning options
     parser.add_argument('--aggressive-scan', action='store_true',
                         help='Use Nmap aggressive scan (-T4 -A -v) for port and service detection')
+    
+    # Web crawling option
+    parser.add_argument('--crawl-web', action='store_true',
+                        help='Use Scrapy to crawl web sites and generate sitemap')
+    
+    parser.add_argument('--crawl-depth', type=int, default=2,
+                        help='Maximum depth for web crawling (default: 2)')
     
     # Pre-exploitation phase options
     parser.add_argument('--filter', choices=['all', 'critical', 'high', 'medium', 'low'],
@@ -96,7 +103,7 @@ def parse_arguments():
                         help='Suppress all output except errors')
     
     parser.add_argument('--no-verify-ssl', action='store_true',
-                    help='Disable SSL certificate verification (security risk)')
+                        help='Disable SSL certificate verification (security risk)')
     
     parser.add_argument('--suppress-ssl-warnings', action='store_true', default=True,
                         help='Suppress SSL certificate warnings')
@@ -107,7 +114,11 @@ def parse_arguments():
     if len(sys.argv) == 1:
         print_usage()
         sys.exit(1)
-        
+    
+    # Convert 'all' to all phases
+    if 'all' in args.phases:
+        args.phases = ['recon', 'preexploit', 'exploit', 'postexploit']
+    
     return args
 
 def print_usage():
@@ -386,7 +397,7 @@ def print_summary(framework, phase):
     print(f"\n{'=' * 50}")
 
 def main():
-    """Main function"""
+    """Main function with enhanced phase execution"""
     # Parse command-line arguments
     args = parse_arguments()
     
@@ -433,15 +444,8 @@ def main():
         elif args.filter == 'low':
             exploit_filter['risk_level'] = ['critical', 'high', 'medium', 'low']
     
-    # Determine which phases to run
-    phases = []
-    if args.phase == 'all':
-        phases = ['recon', 'preexploit', 'exploit', 'postexploit']
-    else:
-        phases = [args.phase]
-    
-    # Run the specified phases
-    for phase in phases:
+    # Run each phase in sequence
+    for phase in args.phases:
         framework.logger.info(f"Starting {phase} phase")
         
         try:
@@ -452,7 +456,9 @@ def main():
                                              skip_web=args.skip_web,
                                              use_ping_scan=args.ping_scan,
                                              use_netbios_scan=args.netbios_scan,
-                                             use_aggressive_scan=args.aggressive_scan)
+                                             use_aggressive_scan=args.aggressive_scan,
+                                             crawl_web=args.crawl_web,
+                                             crawl_depth=args.crawl_depth)
             
             elif phase == 'preexploit':
                 # Run pre-exploitation phase
@@ -477,38 +483,40 @@ def main():
             
             if not success:
                 framework.logger.error(f"Failed to run {phase} phase")
-                if phase != phases[-1]:  # Only exit if not the last phase
-                    return 1
+                continue  # Continue with next phase instead of exiting
             
             # Print summary
             if verbosity > 0:
                 print_summary(framework, phase)
                 
-            # Generate reports
-            try:
-                if phase == 'preexploit':
-                    # Generate reports for pre-exploitation phase
-                    phase_controller = getattr(framework, phase)
-                    if hasattr(phase_controller, 'generate_report'):
-                        report_files = phase_controller.generate_report(format=args.format)
-                        framework.logger.info(f"Generated reports: {', '.join([f for f in report_files.values() if f])}")
-            except Exception as e:
-                framework.logger.error(f"Error generating reports: {str(e)}")
+            # Generate reports for each completed phase if requested
+            if args.format != 'json':  # Final JSON will be saved at the end
+                try:
+                    if hasattr(getattr(framework, phase), 'generate_report'):
+                        report_files = getattr(framework, phase).generate_report(format=args.format)
+                        framework.logger.info(f"Generated phase reports: {', '.join([f for f in report_files.values() if f])}")
+                except Exception as e:
+                    framework.logger.error(f"Error generating reports for {phase}: {str(e)}")
             
         except KeyboardInterrupt:
             framework.logger.error(f"{phase.capitalize()} phase interrupted by user")
-            return 1
+            break
         except Exception as e:
             framework.logger.error(f"Error in {phase} phase: {str(e)}")
             if verbosity >= 2:
                 import traceback
                 traceback.print_exc()
-            return 1
+            continue  # Continue with next phase
     
-    # Save final results
+    # Save final complete results with all phases
     try:
-        results_file = framework.save_results()
-        framework.logger.info(f"Results saved to {results_file}")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target_safe = args.target.replace(".", "_").replace(":", "_")
+        phases_str = "_".join(args.phases)
+        results_file = f"{args.output_dir}/{target_safe}_{phases_str}_{timestamp}.json"
+        
+        framework.save_results(results_file)
+        framework.logger.info(f"Complete results saved to {results_file}")
     except Exception as e:
         framework.logger.error(f"Error saving results: {str(e)}")
 
