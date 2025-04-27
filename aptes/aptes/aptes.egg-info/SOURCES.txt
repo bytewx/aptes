@@ -1,8 +1,0 @@
-README.md
-setup.py
-aptes.egg-info/PKG-INFO
-aptes.egg-info/SOURCES.txt
-aptes.egg-info/dependency_links.txt
-aptes.egg-info/entry_points.txt
-aptes.egg-info/requires.txt
-aptes.egg-info/top_level.txt
