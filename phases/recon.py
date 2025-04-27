@@ -39,13 +39,16 @@ class ReconnaissancePhase(PhaseBase):
             "active": {}
         })
     
-    def _execute(self, passive_only=False, skip_web=False):
+    def _execute(self, passive_only=False, skip_web=False, use_ping_scan=False, use_netbios_scan=False, use_aggressive_scan=False):
         """
         Execute reconnaissance phase operations
         
         Args:
             passive_only (bool): Only perform passive reconnaissance
             skip_web (bool): Skip web scanning
+            use_ping_scan (bool): Use Nmap ping scan for host discovery
+            use_netbios_scan (bool): Use NetBIOS scan for host discovery
+            use_aggressive_scan (bool): Use Nmap aggressive scan for port and service detection
         """
         self.logger.info(f"Running reconnaissance on {self.target}")
         
@@ -54,7 +57,9 @@ class ReconnaissancePhase(PhaseBase):
         
         # Perform active reconnaissance if not passive only
         if not passive_only:
-            self.active_recon(skip_web=skip_web)
+            self.active_recon(skip_web=skip_web, use_ping_scan=use_ping_scan, 
+                             use_netbios_scan=use_netbios_scan, 
+                             use_aggressive_scan=use_aggressive_scan)
         
         return self.results
     
@@ -81,30 +86,60 @@ class ReconnaissancePhase(PhaseBase):
         self.logger.info("Passive reconnaissance completed")
         return self.results["passive"]
     
-    def active_recon(self, skip_web=False):
+    def active_recon(self, skip_web=False, use_ping_scan=False, use_netbios_scan=False, use_aggressive_scan=False):
         """
         Perform active reconnaissance
         
         Args:
             skip_web (bool): Skip web scanning
+            use_ping_scan (bool): Use Nmap ping scan for host discovery
+            use_netbios_scan (bool): Use NetBIOS scan for host discovery
+            use_aggressive_scan (bool): Use Nmap aggressive scan for port and service detection
         """
         self.logger.info("Starting active reconnaissance")
         
-        # Check if we have concurrent futures for parallel execution
-        if CONCURRENT_AVAILABLE:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=self.threads) as executor:
-                port_scan_future = executor.submit(self.port_scan)
-                service_enum_future = executor.submit(self.service_enum)
-                vuln_scan_future = executor.submit(self.vuln_scan)
-                
-                self.results["active"]["ports"] = port_scan_future.result()
-                self.results["active"]["services"] = service_enum_future.result()
-                self.results["active"]["vulnerabilities"] = vuln_scan_future.result()
+        # Initialize host discovery results
+        if use_ping_scan or use_netbios_scan:
+            self.results["active"]["host_discovery"] = {}
+        
+        # Perform host discovery scans if requested
+        if use_ping_scan:
+            ping_results = self.nmap_ping_scan()
+            self.results["active"]["host_discovery"]["ping_scan"] = ping_results
+            self.logger.info(f"Discovered {len(ping_results)} live hosts with ping scan")
+        
+        if use_netbios_scan:
+            netbios_results = self.netbios_scan()
+            self.results["active"]["host_discovery"]["netbios_scan"] = netbios_results
+            self.logger.info(f"Discovered {len(netbios_results)} hosts with NetBIOS scan")
+        
+        # Perform aggressive scan if requested
+        if use_aggressive_scan:
+            aggressive_results = self.nmap_aggressive_scan()
+            self.results["active"]["aggressive_scan"] = aggressive_results
+            self.logger.info("Aggressive scan completed")
+            
+            # Extract port and service information from aggressive scan
+            self.results["active"]["ports"] = aggressive_results.get("ports", {})
+            self.results["active"]["services"] = aggressive_results.get("services", {})
+            self.results["active"]["os_info"] = aggressive_results.get("os_info", {})
         else:
-            # Sequential execution if concurrent not available
-            self.results["active"]["ports"] = self.port_scan()
-            self.results["active"]["services"] = self.service_enum()
-            self.results["active"]["vulnerabilities"] = self.vuln_scan()
+            # Use standard scans if aggressive scan not requested
+            # Check if we have concurrent futures for parallel execution
+            if CONCURRENT_AVAILABLE:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=self.threads) as executor:
+                    port_scan_future = executor.submit(self.port_scan)
+                    service_enum_future = executor.submit(self.service_enum)
+                    vuln_scan_future = executor.submit(self.vuln_scan)
+                    
+                    self.results["active"]["ports"] = port_scan_future.result()
+                    self.results["active"]["services"] = service_enum_future.result()
+                    self.results["active"]["vulnerabilities"] = vuln_scan_future.result()
+            else:
+                # Sequential execution if concurrent not available
+                self.results["active"]["ports"] = self.port_scan()
+                self.results["active"]["services"] = self.service_enum()
+                self.results["active"]["vulnerabilities"] = self.vuln_scan()
         
         # Perform web scanning if not skipped
         if not skip_web:
@@ -205,6 +240,71 @@ class ReconnaissancePhase(PhaseBase):
                 return {}
         except Exception as e:
             self.logger.debug(f"Error gathering SSL info: {str(e)}")
+            return {"error": str(e)}
+    
+    def nmap_ping_scan(self):
+        """
+        Perform Nmap ping scan for host discovery
+        
+        Returns:
+            list: Live hosts discovered
+        """
+        self.logger.info(f"Performing Nmap ping scan on {self.target}")
+        try:
+            live_hosts = network.nmap_ping_scan(self.target)
+            return live_hosts
+        except Exception as e:
+            self.logger.error(f"Error in Nmap ping scan: {str(e)}")
+            return []
+    
+    def netbios_scan(self):
+        """
+        Perform NetBIOS scan for host discovery
+        
+        Returns:
+            dict: NetBIOS information by host
+        """
+        self.logger.info(f"Performing NetBIOS scan on {self.target}")
+        try:
+            # Run the NetBIOS scan
+            output = network.netbios_scan(self.target)
+            
+            # Parse the results using the dedicated parser
+            if isinstance(output, str):
+                netbios_info = parsers.parse_netbios_output(output)
+                return netbios_info
+            else:
+                # If network.netbios_scan already returned parsed results
+                return output
+        except Exception as e:
+            self.logger.error(f"Error in NetBIOS scan: {str(e)}")
+            return {}
+    
+    def nmap_aggressive_scan(self):
+        """
+        Perform Nmap aggressive scan
+        
+        Returns:
+            dict: Scan results including ports, services, and OS information
+        """
+        self.logger.info(f"Performing Nmap aggressive scan on {self.target}")
+        try:
+            # Run the aggressive scan
+            output = network.nmap_aggressive_scan(self.target)
+            
+            # Parse the output
+            if output:
+                # Use the dedicated parser for aggressive scan output
+                results = parsers.parse_nmap_aggressive_output(output)
+                
+                # Add the raw output for reference
+                results["raw_output"] = output
+                
+                return results
+            else:
+                return {"error": "No output from aggressive scan"}
+        except Exception as e:
+            self.logger.error(f"Error in Nmap aggressive scan: {str(e)}")
             return {"error": str(e)}
     
     def port_scan(self):
