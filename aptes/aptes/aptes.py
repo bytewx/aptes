@@ -52,9 +52,6 @@ def parse_arguments():
 
     parser.add_argument('--skip-web', action='store_true',
                         help='Skip web scanning during recon')
-                        
-    parser.add_argument('--skip-crawler', action='store_true',
-                        help='Skip web crawling during recon')
 
     # Pre-exploitation phase options
     parser.add_argument('--filter', choices=['all', 'critical', 'high', 'medium', 'low'],
@@ -138,7 +135,7 @@ def print_usage():
 class APTESFramework:
     """Main APTES Framework Class"""
 
-    def __init__(self, target=None, output_dir="reports", threads=3, verbosity=1, verify_ssl=True):
+    def init(self, target=None, output_dir="reports", threads=3, verbosity=1, verify_ssl=True):
         """Initialize the APTES framework"""
         self.target = target
         self.output_dir = output_dir
@@ -411,8 +408,7 @@ def main():
                 # Run reconnaissance phase
                 success = framework.run_phase('recon', 
                                              passive_only=args.passive_only,
-                                             skip_web=args.skip_web,
-                                             skip_crawler=args.skip_crawler)
+                                             skip_web=args.skip_web)
 
             elif phase == 'preexploit':
                 # Run pre-exploitation phase
