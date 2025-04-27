@@ -1,3 +1,24 @@
+Metadata-Version: 2.1
+Name: aptes
+Version: 1.0.0
+Summary: Advanced Penetration Testing and Exploitation Suite
+Home-page: https://github.com/byteshell/aptes
+Author: APTES Team
+Author-email: info@aptes.example.com
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Topic :: Security
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+Requires-Dist: requests
+Requires-Dist: urllib3
+Provides-Extra: reports
+Requires-Dist: openpyxl; extra == "reports"
+Provides-Extra: full
+Requires-Dist: concurrent.futures; extra == "full"
+Requires-Dist: openpyxl; extra == "full"
+
 # APTES - Advanced Penetration Testing and Exploitation Suite
 
 APTES is a comprehensive security assessment framework for reconnaissance, pre-exploitation, exploitation, and post-exploitation phases.

@@ -1,0 +1,2 @@
+[console_scripts]
+aptes = aptes.aptes:main
