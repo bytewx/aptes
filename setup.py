@@ -31,7 +31,8 @@ setup(
     ],
     extras_require={
         "reports": ["openpyxl"],
-        "full": ["openpyxl", "concurrent.futures"],
+        "full": ["openpyxl", "scrapy", "concurrent.futures"],
+        "webcrawl": ["scrapy"],
     },
     entry_points={
         "console_scripts": [
