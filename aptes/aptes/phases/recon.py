@@ -67,14 +67,13 @@ class ReconnaissancePhase(PhaseBase):
             "active": {}
         })
     
-    def _execute(self, passive_only=False, skip_web=False, skip_crawler=False):
+    def _execute(self, passive_only=False, skip_web=False):
         """
         Execute reconnaissance phase operations
         
         Args:
             passive_only (bool): Only perform passive reconnaissance
-            skip_web (bool): Skip web scanning during recon
-            skip_crawler (bool): Skip web crawling during recon
+            skip_web (bool): Skip web scanning
         """
         self.logger.info(f"Running reconnaissance on {self.target}")
         
@@ -83,7 +82,7 @@ class ReconnaissancePhase(PhaseBase):
         
         # Perform active reconnaissance if not passive only
         if not passive_only:
-            self.active_recon(skip_web=skip_web, skip_crawler=skip_crawler)
+            self.active_recon(skip_web=skip_web)
         
         return self.results
     
@@ -110,13 +109,12 @@ class ReconnaissancePhase(PhaseBase):
         self.logger.info("Passive reconnaissance completed")
         return self.results["passive"]
     
-    def active_recon(self, skip_web=False, skip_crawler=False):
+    def active_recon(self, skip_web=False):
         """
         Perform active reconnaissance
         
         Args:
             skip_web (bool): Skip web scanning
-            skip_crawler (bool): Skip web crawling
         """
         self.logger.info("Starting active reconnaissance")
         
@@ -138,7 +136,7 @@ class ReconnaissancePhase(PhaseBase):
         
         # Perform web scanning if not skipped
         if not skip_web:
-            self.results["active"]["web"] = self.web_scan(skip_crawler=skip_crawler)
+            self.results["active"]["web"] = self.web_scan()
         
         self.logger.info("Active reconnaissance completed")
         return self.results["active"]
@@ -484,12 +482,9 @@ class ReconnaissancePhase(PhaseBase):
             counts[service] = counts.get(service, 0) + 1
         return counts
     
-    def web_scan(self, skip_crawler=False):
+    def web_scan(self):
         """
         Perform web scanning with enhanced analysis of common web ports
-        
-        Args:
-            skip_crawler (bool): Skip web crawling
         
         Returns:
             dict: Web scan results
@@ -536,269 +531,7 @@ class ReconnaissancePhase(PhaseBase):
                 
             except requests.exceptions.RequestException:
                 continue
-        
-        # Perform web crawling if not skipped
-        if not skip_crawler:
-            crawler_results = self.web_crawler()
-            results["crawler"] = crawler_results
-        
-        return results
-    
-    def web_crawler(self):
-        """
-        Web crawler to follow links and create a sitemap
-        
-        Returns:
-            dict: Sitemap and crawling results
-        """
-        self.logger.info(f"Crawling website for {self.target}")
-        
-        if not REQUESTS_AVAILABLE:
-            self.logger.error("Requests library not available, skipping web crawling")
-            return {"error": "Requests library not available"}
-        
-        results = {
-            "sitemap": {},
-            "pages": [],
-            "forms": [],
-            "resources": [],
-            "summary": {
-                "total_pages": 0,
-                "total_forms": 0,
-                "total_resources": 0,
-                "external_links": 0
-            }
-        }
-        
-        # Import BeautifulSoup if available
-        try:
-            from bs4 import BeautifulSoup
-            BS4_AVAILABLE = True
-        except ImportError:
-            self.logger.warning("BeautifulSoup not available, crawling will be limited")
-            BS4_AVAILABLE = False
-        
-        # Import robotparser if available
-        try:
-            from urllib.robotparser import RobotFileParser
-            ROBOTPARSER_AVAILABLE = True
-        except ImportError:
-            self.logger.warning("RobotFileParser not available, robots.txt will not be respected")
-            ROBOTPARSER_AVAILABLE = False
-        
-        # Check robots.txt if available
-        rp = None
-        if ROBOTPARSER_AVAILABLE:
-            rp = RobotFileParser()
-            try:
-                # Try both HTTP and HTTPS
-                for protocol in ["https", "http"]:
-                    try:
-                        robots_url = f"{protocol}://{self.target}/robots.txt"
-                        rp.set_url(robots_url)
-                        rp.read()
-                        self.logger.info(f"Respecting robots.txt at {robots_url}")
-                        break
-                    except Exception:
-                        continue
-            except Exception as e:
-                self.logger.debug(f"Error reading robots.txt: {str(e)}")
-                rp = None
-        
-        # Web ports from PORT_NUMBERS
-        web_ports = [80, 443, 8080, 8443]
-        
-        # Queue for BFS traversal and set to track visited URLs
-        from collections import deque
-        queue = deque()
-        visited = set()
-        
-        # Add initial URLs to the queue
-        for port in web_ports:
-            protocol = "https" if port in [443, 8443] or "HTTPS" in PORT_NUMBERS.get(str(port), "") else "http"
-            url = f"{protocol}://{self.target}:{port}"
-            queue.append(url)
-        
-        # Add the URLs without port for standard HTTP/HTTPS
-        queue.append(f"http://{self.target}")
-        queue.append(f"https://{self.target}")
-        
-        # Define the maximum number of pages to crawl to avoid infinite crawling
-        max_pages = 100
-        
-        # Throttling - delay between requests (in seconds)
-        request_delay = 1
-        
-        # Create sitemap structure
-        sitemap = {
-            "root": self.target,
-            "pages": {}
-        }
-        
-        # User agent for requests
-        user_agent = "APTES Web Crawler"
-        
-        # Start crawling
-        while queue and len(visited) < max_pages:
-            current_url = queue.popleft()
-            
-            # Skip if we've already visited this URL
-            if current_url in visited:
-                continue
-            
-            # Check if URL is allowed by robots.txt
-            if rp is not None:
-                from urllib.parse import urlparse
-                parsed_url = urlparse(current_url)
-                if not rp.can_fetch(user_agent, parsed_url.path):
-                    self.logger.debug(f"Skipping {current_url} - disallowed by robots.txt")
-                    continue
-            
-            try:
-                # Throttle requests
-                time.sleep(request_delay)
                 
-                # Make the request
-                response = requests.get(current_url, timeout=10, verify=self.verify_ssl,
-                                    headers={'User-Agent': user_agent})
-                visited.add(current_url)
-                
-                # Extract the path from the URL
-                from urllib.parse import urlparse
-                parsed_url = urlparse(current_url)
-                path = parsed_url.path if parsed_url.path else "/"
-                
-                # Add to the pages list
-                page_info = {
-                    "url": current_url,
-                    "status_code": response.status_code,
-                    "title": None,
-                    "links": [],
-                    "forms": [],
-                    "resources": []
-                }
-                
-                # Parse the HTML content if BeautifulSoup is available
-                if BS4_AVAILABLE and "text/html" in response.headers.get("Content-Type", ""):
-                    soup = BeautifulSoup(response.text, "html.parser")
-                    
-                    # Get the title
-                    title_tag = soup.find("title")
-                    if title_tag:
-                        page_info["title"] = title_tag.get_text().strip()
-                    
-                    # Find all links
-                    links = []
-                    from urllib.parse import urljoin
-                    
-                    for a_tag in soup.find_all("a", href=True):
-                        href = a_tag.get("href")
-                        
-                        # Skip empty or javascript links
-                        if not href or href.startswith("javascript:") or href.startswith("#"):
-                            continue
-                        
-                        # Resolve relative URLs
-                        if not href.startswith("http"):
-                            href = urljoin(current_url, href)
-                        
-                        # Check if the link belongs to the target domain
-                        link_domain = urlparse(href).netloc
-                        if self.target in link_domain:
-                            # Add to the queue for crawling
-                            if href not in visited:
-                                queue.append(href)
-                            
-                            links.append(href)
-                        else:
-                            # Track external links
-                            links.append({"external": href})
-                            results["summary"]["external_links"] += 1
-                    
-                    page_info["links"] = links
-                    
-                    # Find forms
-                    forms = []
-                    for form in soup.find_all("form"):
-                        form_info = {
-                            "action": form.get("action", ""),
-                            "method": form.get("method", "get").upper(),
-                            "inputs": []
-                        }
-                        
-                        # Get all input fields
-                        for input_tag in form.find_all("input"):
-                            input_info = {
-                                "name": input_tag.get("name", ""),
-                                "type": input_tag.get("type", "text"),
-                                "id": input_tag.get("id", ""),
-                                "required": input_tag.has_attr("required")
-                            }
-                            form_info["inputs"].append(input_info)
-                        
-                        forms.append(form_info)
-                        results["forms"].append({
-                            "url": current_url,
-                            "form": form_info
-                        })
-                    
-                    page_info["forms"] = forms
-                    
-                    # Find resources (images, scripts, stylesheets)
-                    resources = []
-                    
-                    # Images
-                    for img in soup.find_all("img", src=True):
-                        src = img.get("src")
-                        if src:
-                            resources.append({"type": "image", "url": urljoin(current_url, src)})
-                    
-                    # Scripts
-                    for script in soup.find_all("script", src=True):
-                        src = script.get("src")
-                        if src:
-                            resources.append({"type": "script", "url": urljoin(current_url, src)})
-                    
-                    # Stylesheets
-                    for link in soup.find_all("link", rel="stylesheet", href=True):
-                        href = link.get("href")
-                        if href:
-                            resources.append({"type": "stylesheet", "url": urljoin(current_url, href)})
-                    
-                    page_info["resources"] = resources
-                    
-                    # Add resources to the results
-                    for resource in resources:
-                        results["resources"].append({
-                            "page_url": current_url,
-                            "resource": resource
-                        })
-                
-                # Add page to the sitemap
-                sitemap["pages"][path] = {
-                    "url": current_url,
-                    "title": page_info.get("title"),
-                    "links": page_info.get("links"),
-                    "has_forms": len(page_info.get("forms", [])) > 0
-                }
-                
-                # Add the page to the results
-                results["pages"].append(page_info)
-                
-            except requests.exceptions.RequestException as e:
-                self.logger.debug(f"Error crawling {current_url}: {str(e)}")
-                continue
-        
-        # Update the summary
-        results["summary"]["total_pages"] = len(results["pages"])
-        results["summary"]["total_forms"] = len(results["forms"])
-        results["summary"]["total_resources"] = len(results["resources"])
-        
-        # Set the sitemap
-        results["sitemap"] = sitemap
-        
-        self.logger.info(f"Completed web crawling for {self.target}. Discovered {results['summary']['total_pages']} pages.")
-        
         return results
     
     def _identify_web_technologies(self, response, results):
