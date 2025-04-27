@@ -69,6 +69,88 @@ def parse_nmap_xml(xml_data):
     
     return results
 
+def parse_nmap_aggressive_output(output):
+    """
+    Parse the output from an aggressive Nmap scan (-T4 -A -v)
+    
+    Args:
+        output (str): Raw output from aggressive Nmap scan
+        
+    Returns:
+        dict: Parsed results including ports, services, and OS info
+    """
+    results = {
+        "ports": {},
+        "services": {},
+        "os_info": {}
+    }
+    
+    if not output:
+        return results
+    
+    # Extract host information
+    host_blocks = re.findall(r"Nmap scan report for ([^\s]+)(?:\s+\(([^\)]+)\))?\n.*?(?=Nmap scan report for|\Z)", 
+                            output, re.DOTALL)
+    
+    for host_block in host_blocks:
+        host_name = host_block[0]
+        host_ip = host_block[1] if host_block[1] else host_name
+        
+        # Initialize host entries in results
+        if host_ip not in results["ports"]:
+            results["ports"][host_ip] = {"tcp": {}, "udp": {}}
+        
+        if host_ip not in results["services"]:
+            results["services"][host_ip] = {"tcp": {}, "udp": {}}
+        
+        # Extract port information
+        port_lines = re.findall(r"(\d+)/(\w+)\s+(\w+)\s+([^\n]+)", output)
+        
+        for port_info in port_lines:
+            port, proto, state, service_info = port_info
+            
+            # Parse service information
+            service = "unknown"
+            product = ""
+            version = ""
+            
+            service_match = re.search(r"([^\s]+)(?:\s+(.+))?", service_info)
+            if service_match:
+                service = service_match.group(1)
+                extra_info = service_match.group(2) if service_match.group(2) else ""
+                
+                # Extract product and version if available
+                product_match = re.search(r"([^\d]+)(?:\s+(\d[^\s]*))?", extra_info)
+                if product_match:
+                    product = product_match.group(1).strip()
+                    version = product_match.group(2) if product_match.group(2) else ""
+            
+            # Add to results
+            results["ports"][host_ip][proto][port] = {
+                "port": port,
+                "state": state,
+                "service": service
+            }
+            
+            if product:
+                results["ports"][host_ip][proto][port]["product"] = product
+            if version:
+                results["ports"][host_ip][proto][port]["version"] = version
+            
+            # Add to services
+            results["services"][host_ip][proto][port] = results["ports"][host_ip][proto][port].copy()
+        
+        # Extract OS information
+        os_match = re.search(r"OS details: ([^\n]+)", output)
+        if os_match:
+            results["os_info"]["details"] = os_match.group(1).strip()
+            
+        os_cpe_match = re.search(r"OS CPE: ([^\n]+)", output)
+        if os_cpe_match:
+            results["os_info"]["cpe"] = os_cpe_match.group(1).strip()
+    
+    return results
+
 def parse_dns_results(output, record_type):
     """
     Parse DNS results from command output
@@ -145,6 +227,38 @@ def parse_ssl_cert_info(output):
         
     if alt_names:
         result["alt_names"] = alt_names
+    
+    return result
+
+def parse_netbios_output(output):
+    """
+    Parse output from NetBIOS scan
+    
+    Args:
+        output (str): Output from nbtscan command
+    
+    Returns:
+        dict: NetBIOS information by IP address
+    """
+    result = {}
+    
+    if not output:
+        return result
+    
+    lines = output.strip().split('\n')
+    
+    for line in lines:
+        # Look for IP and NetBIOS name
+        match = re.search(r"(\d+\.\d+\.\d+\.\d+)\s+(\S+)(?:\s+(.+))?", line)
+        if match:
+            ip = match.group(1)
+            netbios_name = match.group(2)
+            extra_info = match.group(3) if match.group(3) else ""
+            
+            result[ip] = {
+                "name": netbios_name,
+                "info": extra_info
+            }
     
     return result
 
