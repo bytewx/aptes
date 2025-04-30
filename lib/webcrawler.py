@@ -213,7 +213,7 @@ def run_scrapy_subprocess(target_url, output_file, max_depth=2, domains=None):
     with tempfile.NamedTemporaryFile(suffix='.py', delete=False, mode='w') as f:
         spider_file = f.name
         
-        # Write a standalone spider script
+        # Write a standalone spider script - properly escaping the regex patterns
         f.write(f"""#!/usr/bin/env python3
 import scrapy
 from scrapy.spiders import CrawlSpider, Rule
@@ -268,11 +268,12 @@ class SitemapSpider(CrawlSpider):
                 'inputs': []
             }}
             
-            form_action_match = re.search(r'action=["\'](.*?)["\']', form_html)
+            # FIXED REGEX PATTERNS - properly escaped
+            form_action_match = re.search(r'action=["\\\']([^\\\'"]*)["\\\']', form_html)
             if form_action_match:
                 form_info['action'] = urljoin(response.url, form_action_match.group(1))
             
-            form_method_match = re.search(r'method=["\'](.*?)["\']', form_html)
+            form_method_match = re.search(r'method=["\\\']([^\\\'"]*)["\\\']', form_html)
             if form_method_match:
                 form_info['method'] = form_method_match.group(1).upper()
             
@@ -280,15 +281,15 @@ class SitemapSpider(CrawlSpider):
             for input_html in self.input_pattern.findall(form_html):
                 input_info = {{'type': 'text', 'name': None, 'value': None}}
                 
-                input_type_match = re.search(r'type=["\'](.*?)["\']', input_html)
+                input_type_match = re.search(r'type=["\\\']([^\\\'"]*)["\\\']', input_html)
                 if input_type_match:
                     input_info['type'] = input_type_match.group(1)
                 
-                input_name_match = re.search(r'name=["\'](.*?)["\']', input_html)
+                input_name_match = re.search(r'name=["\\\']([^\\\'"]*)["\\\']', input_html)
                 if input_name_match:
                     input_info['name'] = input_name_match.group(1)
                 
-                input_value_match = re.search(r'value=["\'](.*?)["\']', input_html)
+                input_value_match = re.search(r'value=["\\\']([^\\\'"]*)["\\\']', input_html)
                 if input_value_match:
                     input_info['value'] = input_value_match.group(1)
                 
@@ -299,7 +300,7 @@ class SitemapSpider(CrawlSpider):
         # Extract scripts
         scripts = []
         for script_html in self.script_pattern.findall(response.text):
-            script_src_match = re.search(r'src=["\'](.*?)["\']', script_html)
+            script_src_match = re.search(r'src=["\\\']([^\\\'"]*)["\\\']', script_html)
             if script_src_match:
                 scripts.append(urljoin(response.url, script_src_match.group(1)))
         
@@ -356,20 +357,32 @@ if __name__ == "__main__":
             timeout=180  # 3 minute timeout
         )
         
-        # Clean up the temporary file
-        os.unlink(spider_file)
-        
+        # Check for success and log output
         if result.returncode == 0:
             logger.info(f"Scrapy subprocess completed successfully for {target_url}")
-            return True
+            # Log a subset of the stdout for debugging
+            if result.stdout:
+                logger.debug(f"Subprocess output (first 500 chars): {result.stdout[:500]}")
         else:
             logger.error(f"Scrapy subprocess failed for {target_url}: {result.stderr}")
-            return False
+            if result.stdout:
+                logger.debug(f"Subprocess stdout (first 500 chars): {result.stdout[:500]}")
+        
+        # Clean up the temporary file
+        try:
+            os.unlink(spider_file)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary file {spider_file}: {str(e)}")
+        
+        return result.returncode == 0
             
     except subprocess.TimeoutExpired:
         logger.error(f"Scrapy subprocess timed out for {target_url}")
         # Clean up the temporary file
-        os.unlink(spider_file)
+        try:
+            os.unlink(spider_file)
+        except:
+            pass
         return False
     except Exception as e:
         logger.error(f"Error running Scrapy subprocess for {target_url}: {str(e)}")
@@ -508,6 +521,19 @@ def crawl_website(target_url, output_file=None, max_depth=2, domains=None):
             # If subprocess failed or file doesn't exist, try the simple approach
             try:
                 logger.info(f"Trying simple URL check for {target_url}")
+                simple_result = simple_url_check(target_url)
+                if 'error' not in simple_result:
+                    sitemap_items = [simple_result]
+                    # Save the simple result
+                    with open(output_file, 'w') as f:
+                        json.dump(sitemap_items, f, indent=4)
+            except Exception as e:
+                logger.error(f"Simple URL check failed: {str(e)}")
+        
+        # If no results at all, try the simple approach as a fallback
+        if not sitemap_items:
+            try:
+                logger.info(f"No results from crawl, trying simple URL check for {target_url}")
                 simple_result = simple_url_check(target_url)
                 if 'error' not in simple_result:
                     sitemap_items = [simple_result]
