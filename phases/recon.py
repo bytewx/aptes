@@ -7,7 +7,7 @@ import time
 import subprocess
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, date
 
 from phases.base import PhaseBase
 from lib import scanners
@@ -169,10 +169,10 @@ class ReconnaissancePhase(PhaseBase):
             
             self.logger.info(f"Crawling {url} (max depth: {max_depth})")
             
-            # Generate output filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            safe_url = url.replace("://", "_").replace(":", "_").replace("/", "_")
-            output_file = os.path.join(sitemap_dir, f"sitemap_{safe_url}_{timestamp}.json")
+            # Generate output filename using the requested format
+            today = date.today().strftime("%Y%m%d")
+            site_name = host.replace(".", "_").replace(":", "_")
+            output_file = os.path.join(sitemap_dir, f"{site_name}_recon_{today}.json")
             
             # Perform crawling
             try:
@@ -218,6 +218,14 @@ class ReconnaissancePhase(PhaseBase):
                 all_crawl_results[url] = crawl_result
                 
                 self.logger.info(f"Crawled {crawl_result.get('crawled_urls', 0)} pages at {url}")
+                
+                # Process forms to ensure they have form_url field
+                if "sitemap" in crawl_result:
+                    for page_url, page_data in crawl_result["sitemap"].items():
+                        if "forms" in page_data and page_data["forms"]:
+                            for form in page_data["forms"]:
+                                if "form_url" not in form:
+                                    form["form_url"] = page_url
                 
                 # Pause between crawls to avoid overwhelming the server
                 time.sleep(2)
@@ -664,3 +672,71 @@ class ReconnaissancePhase(PhaseBase):
                 continue
                 
         return results
+    
+    def generate_report(self, format="all"):
+        """
+        Generate report in specified format
+        
+        Args:
+            format (str): Report format (json, excel, md, all)
+        
+        Returns:
+            dict: Generated report filenames
+        """
+        # Create report file name with proper format
+        today = date.today().strftime("%Y%m%d")
+        target_safe = self.target.replace(".", "_").replace(":", "_").replace("/", "_")
+        
+        # Create reports directory if it doesn't exist
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+            
+        # Generate reports
+        report_files = {}
+        
+        if format in ["json", "all"]:
+            # JSON Report
+            json_file = f"{self.output_dir}/{target_safe}_recon_{today}.json"
+            try:
+                with open(json_file, "w") as f:
+                    import json
+                    json.dump(self.results, f, indent=4)
+                report_files["json"] = json_file
+                self.logger.info(f"JSON report saved to {json_file}")
+            except Exception as e:
+                self.logger.error(f"Error saving JSON report: {str(e)}")
+                report_files["json"] = None
+        
+        if format in ["excel", "all"]:
+            # Excel Report
+            try:
+                from utils.reporting import ReportGenerator
+                reporter = ReportGenerator(
+                    results=self.framework.results,
+                    target=self.target,
+                    output_dir=self.output_dir
+                )
+                excel_report = reporter.generate_report(format="excel", phase="recon")
+                report_files["excel"] = excel_report.get("excel")
+                self.logger.info(f"Excel report saved to {excel_report.get('excel')}")
+            except Exception as e:
+                self.logger.error(f"Error generating Excel report: {str(e)}")
+                report_files["excel"] = None
+        
+        if format in ["md", "all"]:
+            # Markdown Report
+            try:
+                from utils.reporting import ReportGenerator
+                reporter = ReportGenerator(
+                    results=self.framework.results,
+                    target=self.target,
+                    output_dir=self.output_dir
+                )
+                md_report = reporter.generate_report(format="md", phase="recon")
+                report_files["markdown"] = md_report.get("markdown")
+                self.logger.info(f"Markdown report saved to {md_report.get('markdown')}")
+            except Exception as e:
+                self.logger.error(f"Error generating Markdown report: {str(e)}")
+                report_files["markdown"] = None
+        
+        return report_files
