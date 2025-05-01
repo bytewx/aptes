@@ -12,7 +12,7 @@ import os
 import sys
 import argparse
 import logging
-from datetime import datetime
+from datetime import datetime, date
 
 # Import APTES modules
 from config import Config
@@ -321,6 +321,13 @@ def print_summary(framework, phase):
             if "web" in results["active"]:
                 web_results = results["active"]["web"]
                 print(f"  - Web Technologies: {', '.join(web_results.get('technologies', [])) if web_results.get('technologies') else 'None identified'}")
+        
+        # WebCrawler summary
+        if "webcrawler" in results:
+            print("\nWeb Crawler Results:")
+            print(f"  - URLs Crawled: {results['webcrawler'].get('crawled_urls', 0)}")
+            print(f"  - Forms Found: {results['webcrawler'].get('forms_found', 0)}")
+            print(f"  - Potential Vulnerable URLs: {len(results['webcrawler'].get('potential_vulnerable_urls', []))}")
     
     elif phase == "preexploit":
         # Print pre-exploitation summary
@@ -510,10 +517,11 @@ def main():
     
     # Save final complete results with all phases
     try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Format the filename according to the requested pattern
+        today = date.today().strftime("%Y%m%d")
         target_safe = args.target.replace(".", "_").replace(":", "_")
         phases_str = "_".join(args.phases)
-        results_file = f"{args.output_dir}/{target_safe}_{phases_str}_{timestamp}.json"
+        results_file = f"{args.output_dir}/{target_safe}_{phases_str}_{today}.json"
         
         framework.save_results(results_file)
         framework.logger.info(f"Complete results saved to {results_file}")
