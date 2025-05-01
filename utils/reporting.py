@@ -5,7 +5,7 @@ Reporting utilities for APTES
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, date
 
 logger = logging.getLogger('aptes.reporting')
 
@@ -55,9 +55,9 @@ class ReportGenerator:
         Returns:
             dict: Dictionary of generated report filenames
         """
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        target_safe = self.target.replace(".", "_").replace(":", "_")
-        base_filename = f"{self.output_dir}/{target_safe}_{phase}_{timestamp}"
+        today = date.today().strftime("%Y%m%d")
+        target_safe = self.target.replace(".", "_").replace(":", "_").replace("/", "_")
+        base_filename = f"{self.output_dir}/{target_safe}_{phase}_{today}"
         
         report_files = {}
         
@@ -313,52 +313,52 @@ class ReportGenerator:
                             row += 1
                 
                 row += 1
+        
+        # Web crawler results sheet
+        if "webcrawler" in data:
+            crawler_sheet = workbook.create_sheet("Web Crawler")
+            crawler_sheet['A1'] = "Web Crawler Results"
+            crawler_sheet['A1'].font = Font(bold=True, size=14)
             
-            # Web scan results
-            if "web" in data["active"]:
-                active_sheet[f'A{row}'] = "Web Scan Results"
-                active_sheet[f'A{row}'].font = Font(bold=True)
+            row = 3
+            crawler_sheet[f'A{row}'] = "Summary"
+            crawler_sheet[f'A{row}'].font = Font(bold=True)
+            row += 1
+            
+            crawler_sheet[f'A{row}'] = "Crawled URLs:"
+            crawler_sheet[f'B{row}'] = data["webcrawler"].get("crawled_urls", 0)
+            row += 1
+            
+            crawler_sheet[f'A{row}'] = "Forms Found:"
+            crawler_sheet[f'B{row}'] = data["webcrawler"].get("forms_found", 0)
+            row += 1
+            
+            crawler_sheet[f'A{row}'] = "Potential Vulnerable URLs:"
+            crawler_sheet[f'B{row}'] = len(data["webcrawler"].get("potential_vulnerable_urls", []))
+            row += 2
+            
+            # Display forms
+            if "sitemap" in data["webcrawler"]:
+                crawler_sheet[f'A{row}'] = "Forms"
+                crawler_sheet[f'A{row}'].font = Font(bold=True)
                 row += 1
                 
-                web_data = data["active"]["web"]
+                crawler_sheet[f'A{row}'] = "URL"
+                crawler_sheet[f'B{row}'] = "Form Action"
+                crawler_sheet[f'C{row}'] = "Method"
+                crawler_sheet[f'D{row}'] = "Input Fields"
+                row += 1
                 
-                # Headers
-                if "headers" in web_data:
-                    active_sheet[f'A{row}'] = "Web Headers"
-                    row += 1
-                    
-                    for url, headers in web_data["headers"].items():
-                        active_sheet[f'A{row}'] = url
-                        row += 1
-                        
-                        for header, value in headers.items():
-                            active_sheet[f'B{row}'] = header
-                            active_sheet[f'C{row}'] = value
+                for url, page_data in data["webcrawler"]["sitemap"].items():
+                    if "forms" in page_data and page_data["forms"]:
+                        for form in page_data["forms"]:
+                            crawler_sheet[f'A{row}'] = form.get("form_url", url)
+                            crawler_sheet[f'B{row}'] = form.get("action", "")
+                            crawler_sheet[f'C{row}'] = form.get("method", "GET")
+                            crawler_sheet[f'D{row}'] = ", ".join([f"{input.get('name', '')} ({input.get('type', '')})" 
+                                                              for input in form.get("inputs", [])])
                             row += 1
-                        
-                        row += 1
                 
-                # Technologies
-                if "technologies" in web_data and web_data["technologies"]:
-                    active_sheet[f'A{row}'] = "Web Technologies"
-                    row += 1
-                    
-                    for tech in web_data["technologies"]:
-                        active_sheet[f'A{row}'] = tech
-                        row += 1
-                    
-                    row += 1
-                
-                # Interesting files
-                if "interesting_files" in web_data and web_data["interesting_files"]:
-                    active_sheet[f'A{row}'] = "Interesting Files"
-                    row += 1
-                    
-                    for file_info in web_data["interesting_files"]:
-                        active_sheet[f'A{row}'] = file_info.get("url", "Unknown")
-                        active_sheet[f'B{row}'] = file_info.get("content", "")[:100]
-                        row += 1
-    
     def _add_exploit_sheets(self, workbook, data):
         """Add exploitation sheets to Excel workbook"""
         # Exploitation summary sheet
@@ -720,6 +720,67 @@ class ReportGenerator:
                             file.write(f"  - Preview: {file_info['content'][:100]}...\n")
                     
                     file.write("\n")
+        
+        # Web crawler results
+        if "webcrawler" in data:
+            file.write("## Web Crawler Results\n\n")
+            
+            file.write(f"- **Crawled URLs:** {data['webcrawler'].get('crawled_urls', 0)}\n")
+            file.write(f"- **Forms Found:** {data['webcrawler'].get('forms_found', 0)}\n")
+            file.write(f"- **Potential Vulnerable URLs:** {len(data['webcrawler'].get('potential_vulnerable_urls', []))}\n\n")
+            
+            # List forms found
+            if "sitemap" in data["webcrawler"]:
+                file.write("### Forms Found\n\n")
+                
+                # Create a table for forms
+                file.write("| Form URL | Action | Method | Inputs |\n")
+                file.write("|----------|--------|--------|--------|\n")
+                
+                for url, page_data in data["webcrawler"]["sitemap"].items():
+                    if "forms" in page_data and page_data["forms"]:
+                        for form in page_data["forms"]:
+                            form_url = form.get("form_url", url)
+                            action = form.get("action", "")
+                            method = form.get("method", "GET")
+                            
+                            # Format inputs in a readable way
+                            inputs = ", ".join([f"{input.get('name', '')} ({input.get('type', '')})" 
+                                              for input in form.get("inputs", [])])
+                            
+                            file.write(f"| {form_url} | {action} | {method} | {inputs} |\n")
+                
+                file.write("\n")
+                
+                # Detailed form information
+                file.write("### Detailed Form Information\n\n")
+                
+                form_count = 0
+                for url, page_data in data["webcrawler"]["sitemap"].items():
+                    if "forms" in page_data and page_data["forms"]:
+                        for form in page_data["forms"]:
+                            form_count += 1
+                            form_url = form.get("form_url", url)
+                            
+                            file.write(f"#### Form #{form_count} - {form_url}\n\n")
+                            file.write(f"- **Action:** {form.get('action', '')}\n")
+                            file.write(f"- **Method:** {form.get('method', 'GET')}\n")
+                            
+                            # List all form inputs
+                            if "inputs" in form and form["inputs"]:
+                                file.write("- **Inputs:**\n")
+                                
+                                for input_field in form["inputs"]:
+                                    input_type = input_field.get("type", "")
+                                    input_name = input_field.get("name", "")
+                                    input_value = input_field.get("value", "")
+                                    
+                                    file.write(f"  - {input_name} ({input_type})")
+                                    if input_value:
+                                        file.write(f" = {input_value}")
+                                    file.write("\n")
+                            
+                            file.write("\n")
     
     def _write_exploit_markdown(self, file, data):
         """Write exploitation markdown content"""
@@ -822,7 +883,7 @@ class ReportGenerator:
             
             for cleanup in data["evidence_removal"]:
                 file.write(f"### {cleanup.get('host', 'Unknown')}\n\n")
-                file.write(f"- **Actions:** {cleanup.get('actions', 'Unknown')}\n")
+                file.write(f"- **Actions:** {', '.join(cleanup.get('actions', []))}\n")
                 
                 if "details" in cleanup:
                     file.write(f"- **Details:** {cleanup['details']}\n")
