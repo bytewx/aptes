@@ -78,7 +78,7 @@ class APTESSitemapSpider(CrawlSpider):
         
         # Compile patterns for extracting forms, inputs, and scripts
         # Enhanced regex patterns to catch more forms
-        self.form_pattern = re.compile(r'<form\s+[^>]*>.*?</form>', re.DOTALL | re.IGNORECASE)
+        self.form_pattern = re.compile(r'<form[\s\S]*?>([\s\S]*?)</form>', re.DOTALL | re.IGNORECASE)
         self.input_pattern = re.compile(r'<input\s+[^>]*>', re.DOTALL | re.IGNORECASE)
         self.select_pattern = re.compile(r'<select\s+[^>]*>.*?</select>', re.DOTALL | re.IGNORECASE)
         self.option_pattern = re.compile(r'<option\s+[^>]*>.*?</option>', re.DOTALL | re.IGNORECASE)
@@ -97,7 +97,7 @@ class APTESSitemapSpider(CrawlSpider):
         self.rules = (
             Rule(LinkExtractor(allow_domains=self.allowed_domains), callback='parse_page', follow=True),
         )
-    
+
     def parse_page(self, response):
         """Parse a page and extract information"""
         # Skip if we've reached max depth
@@ -119,6 +119,86 @@ class APTESSitemapSpider(CrawlSpider):
         
         # Extract forms using comprehensive method
         forms = self.extract_forms(response)
+        
+        # More aggressive form search if no forms found
+        if not forms:
+            html_content = response.text
+            form_matches = re.findall(r'<form\b[^>]*>(.*?)</form>', html_content, re.DOTALL | re.IGNORECASE)
+            
+            for form_html in form_matches:
+                # Get opening form tag
+                opening_tag = re.search(r'<form\b([^>]*)>', html_content, re.IGNORECASE)
+                opening_tag_text = opening_tag.group(1) if opening_tag else ""
+                
+                form_info = {
+                    'form_url': url,
+                    'action': '',
+                    'method': 'GET',
+                    'inputs': []
+                }
+                
+                # Extract form attributes
+                action_match = re.search(r'\saction=[\'"]([^\'"]*)[\'"]', opening_tag_text)
+                if action_match:
+                    form_info['action'] = action_match.group(1)
+                    
+                method_match = re.search(r'\smethod=[\'"]([^\'"]*)[\'"]', opening_tag_text)
+                if method_match:
+                    form_info['method'] = method_match.group(1).upper()
+                
+                # Extract inputs
+                input_tags = re.findall(r'<input\b[^>]*>', form_html, re.DOTALL | re.IGNORECASE)
+                for input_html in input_tags:
+                    input_info = {'type': 'text', 'name': '', 'value': ''}
+                    
+                    type_match = re.search(r'\stype=[\'"]([^\'"]*)[\'"]', input_html)
+                    if type_match:
+                        input_info['type'] = type_match.group(1)
+                        
+                    name_match = re.search(r'\sname=[\'"]([^\'"]*)[\'"]', input_html)
+                    if name_match:
+                        input_info['name'] = name_match.group(1)
+                        
+                    value_match = re.search(r'\svalue=[\'"]([^\'"]*)[\'"]', input_html)
+                    if value_match:
+                        input_info['value'] = value_match.group(1)
+                    
+                    form_info['inputs'].append(input_info)
+                
+                # Find select elements
+                select_tags = re.findall(r'<select\b[^>]*>.*?</select>', form_html, re.DOTALL | re.IGNORECASE)
+                for select_html in select_tags:
+                    select_info = {'type': 'select', 'name': '', 'options': []}
+                    
+                    name_match = re.search(r'\sname=[\'"]([^\'"]*)[\'"]', select_html)
+                    if name_match:
+                        select_info['name'] = name_match.group(1)
+                    
+                    # Extract options
+                    option_tags = re.findall(r'<option\b[^>]*>.*?</option>', select_html, re.DOTALL | re.IGNORECASE)
+                    for option_html in option_tags:
+                        value_match = re.search(r'\svalue=[\'"]([^\'"]*)[\'"]', option_html)
+                        if value_match:
+                            select_info['options'].append(value_match.group(1))
+                    
+                    form_info['inputs'].append(select_info)
+                
+                # Find textarea elements
+                textarea_tags = re.findall(r'<textarea\b[^>]*>.*?</textarea>', form_html, re.DOTALL | re.IGNORECASE)
+                for textarea_html in textarea_tags:
+                    textarea_info = {'type': 'textarea', 'name': '', 'value': ''}
+                    
+                    name_match = re.search(r'\sname=[\'"]([^\'"]*)[\'"]', textarea_html)
+                    if name_match:
+                        textarea_info['name'] = name_match.group(1)
+                    
+                    content_match = re.search(r'<textarea\b[^>]*>(.*?)</textarea>', textarea_html, re.DOTALL)
+                    if content_match:
+                        textarea_info['value'] = content_match.group(1)
+                    
+                    form_info['inputs'].append(textarea_info)
+                
+                forms.append(form_info)
         
         # Extract scripts
         scripts = []
@@ -583,7 +663,11 @@ if __name__ == "__main__":
         'DOWNLOAD_DELAY': 0.5,
         'COOKIES_ENABLED': True,
         'LOG_LEVEL': 'INFO',
-        'DEPTH_LIMIT': {max_depth}
+        'DEPTH_LIMIT': 5,
+        'DOWNLOAD_TIMEOUT': 30,  # Increase timeout
+        'REDIRECT_ENABLED': True,
+        'REDIRECT_MAX_TIMES': 5,
+        'HTTPERROR_ALLOW_ALL': True  # Process pages even with HTTP errors
     }})
     
     process = CrawlerProcess(settings)
