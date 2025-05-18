@@ -1,9 +1,0 @@
-requests
-urllib3
-
-[full]
-concurrent.futures
-openpyxl
-
-[reports]
-openpyxl
