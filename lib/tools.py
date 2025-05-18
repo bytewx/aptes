@@ -168,6 +168,422 @@ def run_sqlmap(target, options=None, output_dir=None, timeout=600):
             "output_dir": output_dir
         }
 
+def run_sqlmap_advanced(target, output_dir=None, crawl_depth=5, flush_session=True, timeout=1200):
+    """
+    Run SQLMap with advanced options for comprehensive web app testing.
+    Args:
+        target (str): Target URL.
+        output_dir (str): Output directory.
+        crawl_depth (int): Depth for crawling.
+        flush_session (bool): Whether to flush previous session.
+        timeout (int): Timeout in seconds.
+    Returns:
+        dict: SQLMap results.
+    """
+    logger.info(f"Running advanced SQLMap against {target}")
+    if not check_sqlmap_installation():
+        logger.error("SQLMap is not installed")
+        return {"error": "SQLMap is not installed"}
+    if not output_dir:
+        output_dir = tempfile.mkdtemp(prefix="aptes_sqlmap_")
+    cmd = [
+        "sqlmap", "-u", target,
+        "--forms",
+        f"--crawl={crawl_depth}",
+        "--batch",
+        f"--output-dir={output_dir}",
+        # "--random-agent"
+    ]
+    if flush_session:
+        cmd.append("--flush-session")
+    try:
+        logger.debug(f"Executing: {' '.join(cmd)}")
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        stdout, stderr = process.communicate(timeout=timeout)
+        results = {
+            "command": " ".join(cmd),
+            "output_dir": output_dir,
+            "stdout": stdout,
+            "returncode": process.returncode
+        }
+        # Parse vulnerabilities as in run_sqlmap
+        if "is vulnerable" in stdout:
+            results["vulnerable"] = True
+            vuln_params = re.findall(r"Parameter '([^']+)' is vulnerable", stdout)
+            vulnerabilities = []
+            for param in vuln_params:
+                injection_type = "Unknown"
+                if "error-based" in stdout:
+                    injection_type = "error-based"
+                elif "boolean-based blind" in stdout:
+                    injection_type = "boolean-based blind"
+                elif "time-based blind" in stdout:
+                    injection_type = "time-based blind"
+                elif "UNION query" in stdout:
+                    injection_type = "UNION query"
+                vulnerabilities.append({
+                    "parameter": param,
+                    "type": injection_type
+                })
+            results["vulnerabilities"] = vulnerabilities
+        else:
+            results["vulnerable"] = False
+        return results
+    except subprocess.TimeoutExpired:
+        logger.error(f"SQLMap timed out after {timeout} seconds")
+        return {
+            "command": " ".join(cmd),
+            "error": f"Timed out after {timeout} seconds",
+            "output_dir": output_dir
+        }
+    except Exception as e:
+        logger.error(f"Error running SQLMap: {e}")
+        return {
+            "command": " ".join(cmd),
+            "error": str(e),
+            "output_dir": output_dir
+        }
+
+def check_owasp_top10_vulnerabilities(target, options=None):
+    """
+    Run dedicated checks for all OWASP Top 10 vulnerabilities.
+    Args:
+        target (str): Target URL.
+        options (dict): Optional scan options.
+    Returns:
+        dict: Results for each OWASP Top 10 category.
+    """
+    results = {}
+    # Try to import requests
+    try:
+        import requests
+    except ImportError:
+        # If requests is not available, return not_implemented for all
+        owasp_top10 = [
+            "A01:2021-Broken Access Control",
+            "A02:2021-Cryptographic Failures",
+            "A03:2021-Injection",
+            "A04:2021-Insecure Design",
+            "A05:2021-Security Misconfiguration",
+            "A06:2021-Vulnerable and Outdated Components",
+            "A07:2021-Identification and Authentication Failures",
+            "A08:2021-Software and Data Integrity Failures",
+            "A09:2021-Security Logging and Monitoring Failures",
+            "A10:2021-Server-Side Request Forgery"
+        ]
+        for item in owasp_top10:
+            results[item] = {"status": "not_implemented"}
+        return results
+
+    # A01:2021-Broken Access Control
+    try:
+        # Try to access a common admin page
+        admin_url = f'https://{target.rstrip("/")}' + "/admin"
+        resp = requests.get(admin_url, timeout=5, verify=False)
+        if resp.status_code == 200 and "login" not in resp.text.lower():
+            results["A01:2021-Broken Access Control"] = {
+                "status": "potential_issue",
+                "details": f"Accessible admin page at {admin_url}"
+            }
+        else:
+            results["A01:2021-Broken Access Control"] = {"status": "ok"}
+    except Exception as e:
+        results["A01:2021-Broken Access Control"] = {"status": "unknown", "error": str(e)}
+
+    # A02:2021-Cryptographic Failures
+    try:
+        resp = requests.get(f'https://{target.rstrip("/")}', timeout=5, verify=False)
+        headers = resp.headers
+        cookies = resp.cookies
+        issues = []
+        # Check for missing HSTS
+        if "Strict-Transport-Security" not in headers:
+            issues.append("Missing Strict-Transport-Security header")
+        # Check for secure cookies
+        for cookie in cookies:
+            if not cookie.secure:
+                issues.append(f"Cookie {cookie.name} is not marked as Secure")
+        if issues:
+            results["A02:2021-Cryptographic Failures"] = {"status": "potential_issue", "details": issues}
+        else:
+            results["A02:2021-Cryptographic Failures"] = {"status": "ok"}
+    except Exception as e:
+        results["A02:2021-Cryptographic Failures"] = {"status": "unknown", "error": str(e)}
+
+    # A03:2021-Injection
+    try:
+        # Try a simple SQL injection payload
+        test_url = f'https://{target.rstrip("/")}' + "/?id=1'"
+        resp = requests.get(test_url, timeout=5, verify=False)
+        if any(err in resp.text.lower() for err in ["sql syntax", "mysql", "syntax error", "unclosed quotation", "odbc", "pdo"]):
+            results["A03:2021-Injection"] = {
+                "status": "potential_issue",
+                "details": f"SQL error detected at {test_url}"
+            }
+        else:
+            results["A03:2021-Injection"] = {"status": "ok"}
+    except Exception as e:
+        results["A03:2021-Injection"] = {"status": "unknown", "error": str(e)}
+
+    # A04:2021-Insecure Design
+    # Heuristic: Check for verbose error messages
+    try:
+        error_url = f'https://{target.rstrip("/")}' + "/nonexistentpage"
+        resp = requests.get(error_url, timeout=5, verify=False)
+        if resp.status_code >= 500 or "exception" in resp.text.lower():
+            results["A04:2021-Insecure Design"] = {
+                "status": "potential_issue",
+                "details": "Verbose error message or stack trace detected"
+            }
+        else:
+            results["A04:2021-Insecure Design"] = {"status": "ok"}
+    except Exception as e:
+        results["A04:2021-Insecure Design"] = {"status": "unknown", "error": str(e)}
+
+    # A05:2021-Security Misconfiguration
+    try:
+        resp = requests.get(f'https://{target.rstrip("/")}', timeout=5, verify=False)
+        headers = resp.headers
+        issues = []
+        if "X-Frame-Options" not in headers:
+            issues.append("Missing X-Frame-Options header")
+        if "X-Content-Type-Options" not in headers:
+            issues.append("Missing X-Content-Type-Options header")
+        if "Server" in headers and ("apache" in headers["Server"].lower() or "nginx" in headers["Server"].lower()):
+            issues.append(f"Server header reveals technology: {headers['Server']}")
+        if issues:
+            results["A05:2021-Security Misconfiguration"] = {"status": "potential_issue", "details": issues}
+        else:
+            results["A05:2021-Security Misconfiguration"] = {"status": "ok"}
+    except Exception as e:
+        results["A05:2021-Security Misconfiguration"] = {"status": "unknown", "error": str(e)}
+
+    # A06:2021-Vulnerable and Outdated Components
+    try:
+        resp = requests.get(f'https://{target.rstrip("/")}', timeout=5, verify=False)
+        body = resp.text
+        outdated = []
+        # Simple checks for old jQuery, WordPress, etc.
+        if "jquery-1." in body or "jquery-2." in body:
+            outdated.append("Old jQuery version detected")
+        if "wordpress" in body.lower():
+            import re
+            m = re.search(r'wordpress\s*([0-9\.]+)', body, re.I)
+            if m and m.group(1).startswith("4."):
+                outdated.append(f"Old WordPress version detected: {m.group(1)}")
+        if outdated:
+            results["A06:2021-Vulnerable and Outdated Components"] = {"status": "potential_issue", "details": outdated}
+        else:
+            results["A06:2021-Vulnerable and Outdated Components"] = {"status": "ok"}
+    except Exception as e:
+        results["A06:2021-Vulnerable and Outdated Components"] = {"status": "unknown", "error": str(e)}
+
+    # A07:2021-Identification and Authentication Failures
+    try:
+        login_url = f'https://{target.rstrip("/")}' + "/login"
+        resp = requests.get(login_url, timeout=5, verify=False)
+        if resp.status_code == 200 and ("password" in resp.text.lower() or "login" in resp.text.lower()):
+            # Try default creds (admin/admin)
+            resp2 = requests.post(login_url, data={"username": "admin", "password": "admin"}, timeout=5, verify=False)
+            if resp2.status_code == 200 and "logout" in resp2.text.lower():
+                results["A07:2021-Identification and Authentication Failures"] = {
+                    "status": "potential_issue",
+                    "details": "Default credentials (admin/admin) may work"
+                }
+            else:
+                results["A07:2021-Identification and Authentication Failures"] = {"status": "ok"}
+        else:
+            results["A07:2021-Identification and Authentication Failures"] = {"status": "ok"}
+    except Exception as e:
+        results["A07:2021-Identification and Authentication Failures"] = {"status": "unknown", "error": str(e)}
+
+    # A08:2021-Software and Data Integrity Failures
+    # Heuristic: Check for missing SRI in script tags
+    try:
+        resp = requests.get(f'https://{target.rstrip("/")}', timeout=5, verify=False)
+        body = resp.text
+        import re
+        scripts = re.findall(r'<script[^>]+src=[\'"][^\'"]+[\'"][^>]*>', body, re.I)
+        missing_sri = []
+        for script in scripts:
+            if "integrity=" not in script:
+                missing_sri.append(script)
+        if missing_sri:
+            results["A08:2021-Software and Data Integrity Failures"] = {
+                "status": "potential_issue",
+                "details": f"{len(missing_sri)} script tags missing SRI"
+            }
+        else:
+            results["A08:2021-Software and Data Integrity Failures"] = {"status": "ok"}
+    except Exception as e:
+        results["A08:2021-Software and Data Integrity Failures"] = {"status": "unknown", "error": str(e)}
+
+    # A09:2021-Security Logging and Monitoring Failures
+    # Heuristic: Check for generic error messages
+    try:
+        error_url = f'https://{target.rstrip("/")}' + "/nonexistentpage"
+        resp = requests.get(error_url, timeout=5, verify=False)
+        if resp.status_code == 404 and "not found" in resp.text.lower():
+            results["A09:2021-Security Logging and Monitoring Failures"] = {"status": "ok"}
+        else:
+            results["A09:2021-Security Logging and Monitoring Failures"] = {
+                "status": "potential_issue",
+                "details": "No standard 404 error message"
+            }
+    except Exception as e:
+        results["A09:2021-Security Logging and Monitoring Failures"] = {"status": "unknown", "error": str(e)}
+
+    # A10:2021-Server-Side Request Forgery
+    # Heuristic: Look for SSRF-prone parameters in forms
+    try:
+        resp = requests.get(f'https://{target.rstrip("/")}', timeout=5, verify=False)
+        body = resp.text
+        import re
+        ssrf_params = re.findall(r'name=["\'](url|uri|path|dest|redirect|next)["\']', body, re.I)
+        if ssrf_params:
+            results["A10:2021-Server-Side Request Forgery"] = {
+                "status": "potential_issue",
+                "details": f"Potential SSRF parameter(s) found: {', '.join(set(ssrf_params))}"
+            }
+        else:
+            results["A10:2021-Server-Side Request Forgery"] = {"status": "ok"}
+    except Exception as e:
+        results["A10:2021-Server-Side Request Forgery"] = {"status": "unknown", "error": str(e)}
+
+    return results
+
+def detect_modern_web_frameworks(target, html_content):
+    """
+    Identify modern web frameworks and check for framework-specific vulns.
+    Args:
+        target (str): Target URL.
+        html_content (str): HTML content of the page.
+    Returns:
+        dict: Frameworks detected and possible vulnerabilities.
+    """
+    frameworks = []
+    vulns = []
+    # Simple detection by script src and meta tags
+    if "react" in html_content.lower():
+        frameworks.append("React")
+        # Add React-specific checks here
+    if "angular" in html_content.lower():
+        frameworks.append("Angular")
+    if "vue" in html_content.lower():
+        frameworks.append("Vue.js")
+    if "ember" in html_content.lower():
+        frameworks.append("Ember.js")
+    if "jquery" in html_content.lower():
+        frameworks.append("jQuery")
+    # ...add more as needed...
+    # Placeholder for framework-specific vulnerability checks
+    return {"frameworks": frameworks, "framework_vulnerabilities": vulns}
+
+def detect_technology_stack(html_content, headers=None):
+    """
+    Enhanced technology stack detection.
+    Args:
+        html_content (str): HTML content.
+        headers (dict): HTTP headers.
+    Returns:
+        dict: Detected technologies, libraries, dependencies.
+    """
+    stack = set()
+    if headers:
+        server = headers.get("Server", "")
+        if server:
+            stack.add(server)
+        x_powered = headers.get("X-Powered-By", "")
+        if x_powered:
+            stack.add(x_powered)
+    # Look for common JS libraries
+    for lib in ["jquery", "react", "angular", "vue", "bootstrap", "lodash"]:
+        if lib in html_content.lower():
+            stack.add(lib)
+    return {"technology_stack": list(stack)}
+
+def find_sensitive_info_in_js(js_content):
+    """
+    Find exposed API keys, credentials in JS files.
+    Args:
+        js_content (str): JavaScript file content.
+    Returns:
+        list: Sensitive info findings.
+    """
+    findings = []
+    # Simple regex for API keys, tokens, secrets
+    patterns = [
+        r"api[_-]?key\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}['\"]",
+        r"secret\s*[:=]\s*['\"][A-Za-z0-9_\-]{8,}['\"]",
+        r"token\s*[:=]\s*['\"][A-Za-z0-9_\-]{16,}['\"]",
+        r"password\s*[:=]\s*['\"][^'\"]{6,}['\"]"
+    ]
+    for pat in patterns:
+        for match in re.findall(pat, js_content, re.IGNORECASE):
+            findings.append({"type": "sensitive_info", "match": match})
+    return findings
+
+def analyze_csp(headers):
+    """
+    Analyze and test Content Security Policy (CSP) configurations.
+    Args:
+        headers (dict): HTTP headers.
+    Returns:
+        dict: CSP analysis results.
+    """
+    csp = headers.get("Content-Security-Policy", "")
+    result = {"csp_present": bool(csp), "issues": []}
+    if csp:
+        if "'unsafe-inline'" in csp or "'unsafe-eval'" in csp:
+            result["issues"].append("CSP allows unsafe-inline or unsafe-eval")
+        if "*" in csp:
+            result["issues"].append("CSP uses wildcard *")
+    else:
+        result["issues"].append("No CSP header present")
+    return result
+
+def detect_dom_xss(html_content, js_content=None):
+    """
+    Enhanced DOM-based XSS discovery.
+    Args:
+        html_content (str): HTML content.
+        js_content (str): JS content (optional).
+    Returns:
+        list: DOM XSS findings.
+    """
+    findings = []
+    # Look for common DOM XSS sinks
+    dom_sinks = ["document.write", "innerHTML", "outerHTML", "eval", "setTimeout", "setInterval", "location.hash"]
+    for sink in dom_sinks:
+        if sink in html_content:
+            findings.append({"sink": sink, "location": "html"})
+        if js_content and sink in js_content:
+            findings.append({"sink": sink, "location": "js"})
+    return findings
+
+def find_hidden_parameters(html_content):
+    """
+    Find non-visible URL parameters and form fields.
+    Args:
+        html_content (str): HTML content.
+    Returns:
+        list: Hidden parameter findings.
+    """
+    findings = []
+    # Hidden input fields
+    for match in re.findall(r'<input[^>]+type=["\']hidden["\'][^>]*>', html_content, re.IGNORECASE):
+        name_match = re.search(r'name=["\']([^"\']+)["\']', match)
+        if name_match:
+            findings.append({"type": "hidden_input", "name": name_match.group(1)})
+    # Non-visible URL params (heuristic: params not in visible forms)
+    # Placeholder: implement advanced logic as needed
+    return findings
+
 def run_xssniper(target, options=None, timeout=300):
     """
     Run XSSniper against a target
@@ -682,7 +1098,7 @@ def run_default_credentials_check(target, service, port=None, timeout=120):
     # MySQL testing
     elif service == "mysql":
         try:
-            import MySQLdb
+            import pymysql as MySQLdb
             for cred in credentials:
                 try:
                     conn = MySQLdb.connect(
