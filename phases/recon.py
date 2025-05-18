@@ -738,5 +738,20 @@ class ReconnaissancePhase(PhaseBase):
             except Exception as e:
                 self.logger.error(f"Error generating Markdown report: {str(e)}")
                 report_files["markdown"] = None
+
+        # HTML Report
+        try:
+            from utils.reporting import ReportGenerator
+            reporter = ReportGenerator(
+                results=self.framework.results,
+                target=self.target,
+                output_dir=self.output_dir
+            )
+            html_report = reporter.generate_phase_reports("recon")
+            report_files["html"] = html_report.get("html")
+            self.logger.info(f"HTML report saved to {html_report.get('html')}")
+        except Exception as e:
+            self.logger.error(f"Error generating HTML report: {str(e)}")
+            report_files["html"] = None
         
         return report_files
