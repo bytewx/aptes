@@ -21,6 +21,7 @@ from phases.recon import ReconnaissancePhase
 from phases.preexploit import PreExploitationPhase
 from phases.exploit import ExploitationPhase
 from phases.postexploit import PostExploitationPhase
+from utils.reporting import start_final_report_subprocess
 
 def parse_arguments():
     """Parse command-line arguments"""
@@ -525,6 +526,11 @@ def main():
         
         framework.save_results(results_file)
         framework.logger.info(f"Complete results saved to {results_file}")
+
+        # Start background subprocess to generate final HTML report from JSON
+        # Only trigger if all main phases are present in results file name
+        if all(phase in phases_str for phase in ["recon", "preexploit", "exploit"]):
+            start_final_report_subprocess(args.target, args.output_dir)
     except Exception as e:
         framework.logger.error(f"Error saving results: {str(e)}")
 
