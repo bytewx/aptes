@@ -52,7 +52,7 @@ class ReportGenerator:
         Generate report in specified format
         
         Args:
-            format (str): Report format (json, excel, md, all)
+            format (str): Report format (json, excel, all)
             phase (str): Assessment phase to report on
         
         Returns:
@@ -77,11 +77,6 @@ class ReportGenerator:
             else:
                 logger.warning("Excel report skipped - openpyxl library not available")
                 report_files["excel"] = None
-            
-        if format in ["md", "all"]:
-            md_file = f"{base_filename}.md"
-            self.generate_markdown_report(md_file, phase)
-            report_files["markdown"] = md_file
             
         logger.info(f"Reports generated in {self.output_dir} directory")
         return report_files
@@ -484,7 +479,7 @@ class ReportGenerator:
                 content = "<pre class='json-block'>" + json.dumps(llm_suggestions, indent=2, ensure_ascii=False) + "</pre>"
         else:
             content = str(llm_suggestions)
-        # If markdown-like, convert simple newlines and bold
+        # If -like, convert simple newlines and bold
         content = content.replace("\n", "<br>")
         content = content.replace("**", "<b>").replace("__", "<u>")
         return f"<div class='section'><h2>🤖 LLM Exploitation Suggestions</h2><div class='json-block'>{content}</div></div>"
