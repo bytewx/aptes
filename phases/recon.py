@@ -678,7 +678,7 @@ class ReconnaissancePhase(PhaseBase):
         Generate report in specified format
         
         Args:
-            format (str): Report format (json, excel, md, all)
+            format (str): Report format (json, excel, all)
         
         Returns:
             dict: Generated report filenames
@@ -722,22 +722,6 @@ class ReconnaissancePhase(PhaseBase):
             except Exception as e:
                 self.logger.error(f"Error generating Excel report: {str(e)}")
                 report_files["excel"] = None
-        
-        if format in ["md", "all"]:
-            # Markdown Report
-            try:
-                from utils.reporting import ReportGenerator
-                reporter = ReportGenerator(
-                    results=self.framework.results,
-                    target=self.target,
-                    output_dir=self.output_dir
-                )
-                md_report = reporter.generate_report(format="md", phase="recon")
-                report_files["markdown"] = md_report.get("markdown")
-                self.logger.info(f"Markdown report saved to {md_report.get('markdown')}")
-            except Exception as e:
-                self.logger.error(f"Error generating Markdown report: {str(e)}")
-                report_files["markdown"] = None
 
         # HTML Report
         try:
