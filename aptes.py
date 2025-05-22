@@ -20,7 +20,6 @@ from utils.logger import setup_logger
 from phases.recon import ReconnaissancePhase
 from phases.preexploit import PreExploitationPhase
 from phases.exploit import ExploitationPhase
-from phases.postexploit import PostExploitationPhase
 from utils.reporting import start_final_report_subprocess
 
 def parse_arguments():
@@ -31,7 +30,7 @@ def parse_arguments():
     parser.add_argument('target', nargs='?', help='Target host or IP address')
     
     # Phase selection
-    parser.add_argument('-p', '--phases', nargs='+', choices=['recon', 'preexploit', 'exploit', 'postexploit', 'all'],
+    parser.add_argument('-p', '--phases', nargs='+', choices=['recon', 'preexploit', 'exploit', 'all'],
                       default=['preexploit'], help='Phases to run in sequence (default: preexploit)')
     
     # General options
@@ -44,7 +43,7 @@ def parse_arguments():
     parser.add_argument('--threads', type=int, default=3,
                         help='Number of threads for concurrent operations (default: 3)')
     
-    parser.add_argument('--format', choices=['json', 'excel', 'md', 'all'], default='all',
+    parser.add_argument('--format', choices=['json', 'excel', 'all'], default='all',
                         help='Report format (default: all)')
     
     # Reconnaissance phase options
@@ -86,16 +85,6 @@ def parse_arguments():
     parser.add_argument('--auto-exploit', action='store_true',
                         help='Automatically exploit without confirmation')
     
-    # Post-exploitation phase options
-    parser.add_argument('--install-persistence', action='store_true',
-                        help='Install persistence mechanisms')
-    
-    parser.add_argument('--exfiltrate-data', action='store_true',
-                        help='Exfiltrate sensitive data')
-    
-    parser.add_argument('--no-cleanup', action='store_true',
-                        help='Skip cleaning up traces of activity')
-    
     # Verbosity options
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Enable verbose output')
@@ -118,7 +107,7 @@ def parse_arguments():
     
     # Convert 'all' to all phases
     if 'all' in args.phases:
-        args.phases = ['recon', 'preexploit', 'exploit', 'postexploit']
+        args.phases = ['recon', 'preexploit', 'exploit']
     
     return args
 
@@ -141,14 +130,14 @@ def print_usage():
     print("  Target Selection:")
     print("    TARGET                  Target host or IP address to assess")
     print("\n  Phase Selection:")
-    print("    -p, --phase {recon,preexploit,exploit,postexploit,all}")
+    print("    -p, --phase {recon,preexploit,exploit,all}")
     print("                            Phase to run (default: preexploit)")
     
     print("\n  General Options:")
     print("    -o, --output-dir DIR    Directory for output reports (default: reports)")
     print("    -r, --results-file FILE Load results from previous phase")
     print("    --threads N             Number of threads for concurrent operations (default: 3)")
-    print("    --format {json,excel,md,all}")
+    print("    --format {json,excel,all}")
     print("                            Report format (default: all)")
     
     print("\n  Reconnaissance Options:")
@@ -191,14 +180,13 @@ class APTESFramework:
         self.recon = ReconnaissancePhase(self)
         self.preexploit = PreExploitationPhase(self)
         self.exploit = ExploitationPhase(self)
-        self.postexploit = PostExploitationPhase(self)
         
         # Current phase tracking
         self.current_phase = None
     
     def run_phase(self, phase_name, **kwargs):
         """Run a specific phase of the framework"""
-        if phase_name not in ["recon", "preexploit", "exploit", "postexploit"]:
+        if phase_name not in ["recon", "preexploit", "exploit"]:
             self.logger.error(f"Unknown phase: {phase_name}")
             return False
         
@@ -382,26 +370,6 @@ def print_summary(framework, phase):
             for shell in results["shells"]:
                 print(f"  - {shell.get('type', 'Unknown')} shell on {shell.get('target', 'Unknown')} ({shell.get('privileges', 'unknown')} privileges)")
     
-    elif phase == "postexploit":
-        # Print post-exploitation summary
-        if "persistence" in results:
-            print(f"Persistence Mechanisms: {len(results['persistence'])}")
-            for mechanism in results["persistence"]:
-                print(f"  - {mechanism.get('technique', 'Unknown')} on {mechanism.get('host', 'Unknown')}")
-        
-        if "data_exfiltration" in results:
-            print(f"\nData Exfiltration:")
-            total_data = sum(op.get("total_size", 0) for op in results["data_exfiltration"])
-            print(f"  - Total data exfiltrated: {total_data / (1024*1024):.2f} MB")
-            
-            data_types = set()
-            for op in results["data_exfiltration"]:
-                for data_type in op.get("data_types", []):
-                    data_types.add(data_type)
-            
-            if data_types:
-                print(f"  - Types of data: {', '.join(data_types)}")
-    
     print(f"\n{'=' * 50}")
 
 def main():
@@ -481,13 +449,6 @@ def main():
                 success = framework.run_phase('exploit',
                                              auto_exploit=args.auto_exploit,
                                              exploit_filter=exploit_filter)
-            
-            elif phase == 'postexploit':
-                # Run post-exploitation phase
-                success = framework.run_phase('postexploit',
-                                             install_persistence=args.install_persistence,
-                                             exfiltrate_data=args.exfiltrate_data,
-                                             cleanup_traces=not args.no_cleanup)
             
             if not success:
                 framework.logger.error(f"Failed to run {phase} phase")
