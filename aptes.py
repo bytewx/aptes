@@ -230,7 +230,7 @@ class APTESFramework:
         """Print the APTES banner"""
         banner = """
         ╔═══════════════════════════════════════════════════════╗
-        ║             APTES - Advanced Penetration              ║
+        ║             APTES - Automated Penetration             ║
         ║             Testing and Exploitation Suite            ║
         ╚═══════════════════════════════════════════════════════╝
         """
