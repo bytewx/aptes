@@ -731,9 +731,10 @@ class ReconnaissancePhase(PhaseBase):
                 target=self.target,
                 output_dir=self.output_dir
             )
-            html_report = reporter.generate_phase_reports("recon")
-            report_files["html"] = html_report.get("html")
-            self.logger.info(f"HTML report saved to {html_report.get('html')}")
+            html_file = f"{self.output_dir}/{target_safe}_recon_{today}.html"
+            reporter.generate_combined_html_report(filename=html_file)
+            report_files["html"] = html_file
+            self.logger.info(f"HTML report saved to {html_file}")
         except Exception as e:
             self.logger.error(f"Error generating HTML report: {str(e)}")
             report_files["html"] = None
