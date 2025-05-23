@@ -561,6 +561,21 @@ class ReportGenerator:
             import json
             return f'<div class="json-block">{json.dumps(obj, indent=2, ensure_ascii=False)}</div>'
 
+        def find_llm_suggestions(results):
+            # Search for LLM suggestions in exploit, preexploit, recon, or root
+            for phase in ["exploit", "preexploit", "recon"]:
+                phase_data = results.get(phase, {})
+                if isinstance(phase_data, dict) and "llm_suggestions" in phase_data:
+                    llm = phase_data["llm_suggestions"]
+                    if llm and (isinstance(llm, dict) and llm.get("raw_response")) or (isinstance(llm, str) and llm.strip()):
+                        return llm
+            # Also check at root level
+            if "llm_suggestions" in results:
+                llm = results["llm_suggestions"]
+                if llm and (isinstance(llm, dict) and llm.get("raw_response")) or (isinstance(llm, str) and llm.strip()):
+                    return llm
+            return None
+
         html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -749,12 +764,9 @@ class ReportGenerator:
                 html += f"<b>Initial User:</b> {p.get('initial_user','')}<br>"
                 html += f"<b>Escalated User:</b> {p.get('escalated_user','')}<br>"
                 html += f"<b>Details:</b> {p.get('details','')}</div><br>"
-        # Always show LLM suggestions if present (even if no exploits/shells/pe)
-        llm_suggestions = exploit.get("llm_suggestions")
-        if llm_suggestions and (
-            (isinstance(llm_suggestions, dict) and llm_suggestions.get("raw_response"))
-            or (isinstance(llm_suggestions, str) and llm_suggestions.strip())
-        ):
+        # Always show LLM suggestions if present anywhere (not just in exploit)
+        llm_suggestions = find_llm_suggestions(self.results)
+        if llm_suggestions:
             html += self._render_llm_suggestions(llm_suggestions)
         elif not (summary or exploits or shells or pe):
             html += "<i>No exploitation data available.</i>"
