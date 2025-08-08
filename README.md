@@ -1,4 +1,4 @@
-# APTES - Advanced Penetration Testing and Exploitation Suite
+# APTES - Automated Penetration Testing and Exploitation Suite
 
 A comprehensive automated security assessment framework for reconnaissance, pre-exploitation, and exploitation phases.
 
