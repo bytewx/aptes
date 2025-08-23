@@ -7,6 +7,7 @@ import time
 import subprocess
 import logging
 import os
+import shutil
 from datetime import datetime, date
 
 from phases.base import PhaseBase
@@ -670,9 +671,39 @@ class ReconnaissancePhase(PhaseBase):
                 
             except requests.exceptions.RequestException:
                 continue
-                
+
+        print(self.web_server_scan())
+
         return results
     
+    def web_server_scan(self):
+        """
+        Perform a web server vulnerability scan using Nikto.
+
+        Args:
+            format (str): Report format (json, excel, all)
+
+        Returns:
+            str: Scan output if successful, or an error message if Nikto is not installed.
+        """
+        # Check if 'nikto' is installed and available in the system PATH
+        if shutil.which("nikto") is None:
+            # Log an error if Nikto is not found
+            self.logger.error("Nikto is not installed or not in PATH.")
+            return "Nikto not found. Please install it before running the scan."
+        
+        # Log an info message before starting the scan
+        self.logger.info("Scanning in progress, please wait...")
+
+        # Construct the Nikto command with the target URL
+        cmd = ["nikto", "-h", f"http://{self.target}"]
+
+        # Run the command, capturing both stdout and stderr
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        # Return the scan results (standard output)
+        return result.stdout
+
     def generate_report(self, format="all"):
         """
         Generate report in specified format
