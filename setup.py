@@ -21,7 +21,8 @@ SYSTEM_TOOLS = {
     "subfinder": "Subdomain discovery tool",
     "dnsrecon": "DNS enumeration script",
     "commix": "Command injection exploitation tool",
-    "hydra": "Login cracker"
+    "hydra": "Login cracker",
+    "nikto": "Vulnerability scanner"
 }
 
 class InstallSystemDepsCommand(Command):
